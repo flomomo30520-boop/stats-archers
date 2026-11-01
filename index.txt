@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Suivi Coach - Tir à l'arc</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8">
+
+  <div class="max-w-7xl mx-auto space-y-6">
+    
+    <!-- En-tête -->
+    <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-800/80 p-6 rounded-2xl border border-slate-700">
+      <div>
+        <h1 class="text-2xl font-bold text-amber-400">Suivi Entraîneur — Arc Club Alésien</h1>
+        <p class="text-sm text-slate-400">Analyse des performances et suivi des archers</p>
+      </div>
+      
+      <!-- Sélecteur d'archer -->
+      <div class="flex items-center gap-3">
+        <label for="archerSelect" class="text-sm font-medium text-slate-300">Archer :</label>
+        <select id="archerSelect" class="bg-slate-900 border border-slate-700 text-amber-400 font-semibold px-4 py-2 rounded-xl focus:ring-2 focus:ring-amber-400 outline-none">
+          <option value="">Chargement des archers...</option>
+        </select>
+      </div>
+    </header>
+
+    <!-- Fiche Archer & KPIs -->
+    <div id="statsContainer" class="hidden space-y-6">
+      
+      <!-- Carte Profil -->
+      <div class="bg-slate-800/60 p-6 rounded-2xl border border-slate-700/60 flex flex-wrap gap-6 justify-between items-center">
+        <div>
+          <h2 id="archerName" class="text-xl font-bold text-white">---</h2>
+          <p id="archerMeta" class="text-sm text-slate-400">---</p>
+        </div>
+        <div class="flex gap-4 text-center">
+          <div class="bg-slate-900/60 p-3 px-5 rounded-xl border border-slate-700/50">
+            <span class="block text-xs text-slate-400">Sessions</span>
+            <span id="kpiSessions" class="text-xl font-bold text-amber-400">0</span>
+          </div>
+          <div class="bg-slate-900/60 p-3 px-5 rounded-xl border border-slate-700/50">
+            <span class="block text-xs text-slate-400">Moyenne / Flèche</span>
+            <span id="kpiMoyenne" class="text-xl font-bold text-emerald-400">0.0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Graphique d'évolution -->
+      <div class="bg-slate-800/60 p-6 rounded-2xl border border-slate-700/60">
+        <h3 class="text-lg font-semibold text-slate-200 mb-4">Évolution des scores par session</h3>
+        <div class="h-64">
+          <canvas id="scoreChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Liste des sessions -->
+      <div class="bg-slate-800/60 p-6 rounded-2xl border border-slate-700/60">
+        <h3 class="text-lg font-semibold text-slate-200 mb-4">Historique des entraînements</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="text-xs uppercase bg-slate-900/80 text-slate-400">
+              <tr>
+                <th class="p-3">Date</th>
+                <th class="p-3">Distance</th>
+                <th class="p-3">Nb Volées</th>
+                <th class="p-3">Score Total</th>
+                <th class="p-3">Détail JSON</th>
+              </tr>
+            </thead>
+            <tbody id="sessionsTable" class="divide-y divide-slate-700/50">
+              <!-- Rempli en JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Message de chargement / état vide -->
+    <div id="placeholderMessage" class="text-center py-20 text-slate-500">
+      Sélectionnez un archer pour afficher ses statistiques.
+    </div>
+
+  </div>
+
+  <!-- Connexion Firebase SDK (v10 Modular) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getFirestore, collection, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    // REMPLACE PAR TON BLOC CONFIG FIREBASE CONSOLE
+    const firebaseConfig = {
+      apiKey: AIzaSyCBbCFVTnPyLYVeekA7cL-RXeWBvyBLEcE,
+      authDomain: score-arena-cc4a0.firebaseapp.com,
+      projectId: score-arena-cc4a0,
+      storageBucket: score-arena-cc4a0.firebase²storage.app,
+      appId: 1:273265323914:android:78fbac0b5374eee9d2a273
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let chartInstance = null;
+    let archersMap = {};
+
+    const archerSelect = document.getElementById("archerSelect");
+    const statsContainer = document.getElementById("statsContainer");
+    const placeholderMessage = document.getElementById("placeholderMessage");
+
+    // 1. Charger la liste des archers au démarrage
+    async function initArchers() {
+      try {
+        const querySnapshot = await getDocs(collection(db, "archers"));
+        archerSelect.innerHTML = '<option value="">-- Choisir un archer --</option>';
+
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          const archerId = data.id || doc.id;
+          const label = `${data.prenom || ''} ${data.nom || ''} (${data.surnom || data.categorie || 'Archer'})`;
+          
+          archersMap[archerId] = data;
+
+          const opt = document.createElement("option");
+          opt.value = archerId;
+          opt.textContent = label;
+          archerSelect.appendChild(opt);
+        });
+      } catch (err) {
+        console.error("Erreur chargement archers:", err);
+        archerSelect.innerHTML = '<option value="">Erreur de chargement</option>';
+      }
+    }
+
+    // 2. Charger les sessions quand un archer est sélectionné
+    archerSelect.addEventListener("change", async (e) => {
+      const selectedId = e.target.value;
+      if (!selectedId) {
+        statsContainer.classList.add("hidden");
+        placeholderMessage.classList.remove("hidden");
+        return;
+      }
+
+      const archer = archersMap[selectedId];
+      document.getElementById("archerName").textContent = `${archer.prenom || ''} ${archer.nom || ''}`;
+      document.getElementById("archerMeta").textContent = `Licence: ${archer.numeroLicence || 'N/C'} | Catégorie: ${archer.categorie || 'Non définie'}`;
+
+      // Requête sur /sessions selon le champ archers / IDarchers
+      try {
+        // Test sur le champ archers ou IDarchers
+        const q = query(collection(db, "sessions"), where("archers", "==", selectedId));
+        let snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+          // Fallback si le champ s'appelle IDarchers
+          const q2 = query(collection(db, "sessions"), where("IDarchers", "==", selectedId));
+          snapshot = await getDocs(q2);
+        }
+
+        const sessions = [];
+        snapshot.forEach((doc) => {
+          const s = doc.data();
+          
+          // Traitement du jsonCode si présent
+          let parsedData = null;
+          if (s.jsonCode) {
+            try {
+              parsedData = typeof s.jsonCode === 'string' ? JSON.parse(s.jsonCode) : s.jsonCode;
+            } catch (pErr) {
+              console.warn("Impossible de parser jsonCode:", pErr);
+            }
+          }
+
+          sessions.push({
+            id: doc.id,
+            date: s.dateFormatted || (s.timestamp ? new Date(s.timestamp).toLocaleDateString() : 'N/A'),
+            distance: s.distance || '18m',
+            nbVolees: s.nbVolees || 0,
+            json: parsedData,
+            rawTimestamp: s.timestamp || 0
+          });
+        });
+
+        // Trier par date
+        sessions.sort((a, b) => a.rawTimestamp - b.rawTimestamp);
+
+        renderStats(sessions);
+        statsContainer.classList.remove("hidden");
+        placeholderMessage.classList.add("hidden");
+
+      } catch (err) {
+        console.error("Erreur chargement sessions:", err);
+      }
+    });
+
+    // 3. Rendu des statistiques & graphiques
+    function renderStats(sessions) {
+      document.getElementById("kpiSessions").textContent = sessions.length;
+
+      let totalPoints = 0;
+      let totalFleches = 0;
+      const chartLabels = [];
+      const chartScores = [];
+
+      const tableBody = document.getElementById("sessionsTable");
+      tableBody.innerHTML = "";
+
+      sessions.forEach((s) => {
+        let scoreSession = 0;
+        let flechesSession = 0;
+
+        // Calcul à partir du jsonCode s'il contient les volées/flèches
+        if (s.json && Array.isArray(s.json.voles)) {
+          s.json.voles.forEach(vol => {
+            if (Array.isArray(vol)) {
+              vol.forEach(f => {
+                scoreSession += Number(f) || 0;
+                flechesSession++;
+              });
+            }
+          });
+        } else if (s.json && s.json.scoreTotal) {
+          scoreSession = s.json.scoreTotal;
+          flechesSession = (s.nbVolees || 10) * 3;
+        }
+
+        totalPoints += scoreSession;
+        totalFleches += flechesSession;
+
+        chartLabels.push(s.date);
+        chartScores.push(scoreSession);
+
+        // Ligne tableau
+        const tr = document.createElement("tr");
+        tr.className = "hover:bg-slate-700/30 transition-colors";
+        tr.innerHTML = `
+          <td class="p-3 font-medium text-white">${s.date}</td>
+          <td class="p-3">${s.distance}</td>
+          <td class="p-3">${s.nbVolees}</td>
+          <td class="p-3 font-semibold text-amber-400">${scoreSession || 'Voir JSON'}</td>
+          <td class="p-3 text-xs font-mono text-slate-400 truncate max-w-xs">${s.json ? JSON.stringify(s.json) : 'N/A'}</td>
+        `;
+        tableBody.appendChild(tr);
+      });
+
+      const moyenne = totalFleches > 0 ? (totalPoints / totalFleches).toFixed(2) : "N/A";
+      document.getElementById("kpiMoyenne").textContent = moyenne;
+
+      // Mise à jour Chart.js
+      if (chartInstance) chartInstance.destroy();
+      const ctx = document.getElementById("scoreChart").getContext("2d");
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: chartLabels,
+          datasets: [{
+            label: 'Score Total',
+            data: chartScores,
+            borderColor: '#f59e0b',
+            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            fill: true,
+            tension: 0.3
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }
+          }
+        }
+      });
+    }
+
+    initArchers();
+  </script>
+</body>
+</html>
